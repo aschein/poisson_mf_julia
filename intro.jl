@@ -25,6 +25,60 @@ A = [1 2 3;
      4 5 6; 
      7 8 9]
 
+function poisson_mf_gibbs(Y_DV, K, n_burnin, n_samples, n_thin)
+    # get shape of Y_DV
+    D, V = size(Y_DV)
+
+    # where to store posterior samples
+    A_SDK = zeros(n_samples, D, K)
+    B_SKV = zeros(n_samples, K, V)
+ch
+
+    # initialize parameters and latent variables
+    A_DK = rand(Gamma(shape, scale), (D, K))
+    B_KV = rand(Gamma(shape, scale), (K, V))
+    Y_DVK = zeros(D, V, K)
+    P_K = zeros(K)
+
+    S = n_burnin + n_samples
+    for s in ProgressBar(1:S)
+        # Loop over the non-zeros in Y_DV and allocate
+        for d in 1:D
+            for v in 1:V
+                if Y_DV[d, v] > 0
+                    P_K[:] = A_DK[d, :] .* B_KV[:, v]
+                    P_K[:] = P_K / sum(P_K)
+                    Y_DVK[d, v, :] = rand(Multinomial(Y_DV[d, v], P_K))
+                end
+            end
+        end
+
+        # how do I vectorize this? should I?
+        for d in 1:D
+            for k in 1:K
+                post_shape = shape + sum(Y_DVK[d, :, k])
+                post_rate = 1/scale + sum(B_KV[k, :])
+                A_DK[d, k] = rand(Gamma(post_shape, 1/post_rate))[1]
+            end
+        end
+
+        for v in 1:V
+            for k in 1:K
+                post_shape = shape + sum(Y_DVK[:, v, k])
+                post_rate = 1/scale + sum(A_DK[:, k])
+                B_KV[k, v] = rand(Gamma(post_shape, 1/post_rate))[1]
+            end
+        end
+
+        if s > n_burnin && (s % n_thin) == 0
+            # append samples to dictionary 
+            samples["A_DK"] = [samples["A_DK"]; A_DK]
+            samples["B_KV"] = [samples["B_KV"]; B_KV]
+        end
+    end
+    return samples
+end
+
 # sample a (D x K) matrix of iid gamma random variables with shape 0.01 and scale 100 
 K = 10
 D = 100
@@ -41,42 +95,7 @@ Y_DV = rand.(Poisson.(true_A_DK * true_B_KV))
 println("Number of non-zeros: ", sum(Y_DV .> 0))
 
 # Run Gibbs sampling
-A_DK = rand(Gamma(shape, scale), (D, K))
-B_KV = rand(Gamma(shape, scale), (K, V))
-Y_DVK = zeros(D, V, K)
-P_K = zeros(K)
-
-
-n_burnin = 250
-n_samples = 1000
-S = n_burnin + n_samples
-
-for s in ProgressBar(1:S)
-    # Loop over the non-zeros in Y_DV and allocate
-    for d in 1:D
-        for v in 1:V
-            if Y_DV[d, v] > 0
-                P_K[:] = A_DK[d, :] .* B_KV[:, v]
-                P_K[:] = P_K / sum(P_K)
-                Y_DVK[d, v, :] = rand(Multinomial(Y_DV[d, v], P_K))
-            end
-        end
-    end
-
-    # how do I vectorize this? should I?
-    for d in 1:D
-        for k in 1:K
-            post_shape = shape + sum(Y_DVK[d, :, k])
-            post_rate = 1/scale + sum(B_KV[k, :])
-            A_DK[d, k] = rand(Gamma(post_shape, 1/post_rate))[1]
-        end
-    end
-
-    for v in 1:V
-        for k in 1:K
-            post_shape = shape + sum(Y_DVK[:, v, k])
-            post_rate = 1/scale + sum(A_DK[:, k])
-            B_KV[k, v] = rand(Gamma(post_shape, 1/post_rate))[1]
-        end
-    end
-end
+n_burnin = 100
+n_samples = 2000
+n_thin = 10
+samples = poisson_mf_gibbs(Y_DV, K, n_burnin, n_samples, n_thin)
